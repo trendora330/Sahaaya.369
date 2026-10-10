@@ -111,10 +111,23 @@ export async function tts(text: string, lang: Lang, speed = 1): Promise<string> 
   const key = `${lang}|${speed}|${text}`;
   const hit = ttsCache.get(key);
   if (hit) return hit;
-  const r = await post<Blob | { audioUrl: string }>("/api/tts", { text, lang, speed }, { timeoutMs: 20000 });
-  const url = r instanceof Blob ? URL.createObjectURL(r) : r.audioUrl.startsWith("http") ? r.audioUrl : HTTP + r.audioUrl;
-  ttsCache.set(key, url);
-  return url;
+  const r = await post<Blob | { audioUrl?: string; audioContent?: string }>("/api/tts", { text, lang, language: lang, speed }, { timeoutMs: 5000, retries: 0 });
+  if (r instanceof Blob) {
+    const url = URL.createObjectURL(r);
+    ttsCache.set(key, url);
+    return url;
+  }
+  if (r?.audioContent) {
+    const url = `data:audio/wav;base64,${r.audioContent}`;
+    ttsCache.set(key, url);
+    return url;
+  }
+  if (r?.audioUrl) {
+    const url = r.audioUrl.startsWith("http") ? r.audioUrl : HTTP + r.audioUrl;
+    ttsCache.set(key, url);
+    return url;
+  }
+  throw new Error("No audio returned");
 }
 
 /* ───────────── Menu (OCR + Groq extraction happen server-side) ───────────── */
@@ -133,6 +146,16 @@ export async function parseMenu(image: File, lang: Lang): Promise<ParsedMenu> {
 }
 export async function sampleMenu(id = "1"): Promise<ParsedMenu> {
   return unwrapMenu(await request(`/api/menu/sample/${id}`));
+}
+
+export async function translateMenuDishes(dishes: any[], targetLang: Lang): Promise<any[]> {
+  if (targetLang === "en" || !dishes?.length) return dishes;
+  try {
+    const res = await post<{ dishes: any[] }>("/api/menu/translate", { dishes, targetLang }, { timeoutMs: 15000, retries: 1 });
+    return res.dishes || dishes;
+  } catch {
+    return dishes;
+  }
 }
 
 /* ───────────── Bill ───────────── */
