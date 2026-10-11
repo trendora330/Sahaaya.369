@@ -10,8 +10,7 @@ export const SPEED_LABELS = ["Slow", "Comfortable", "Fast", "Faster"];
 export const STAFF_LANG: Lang = (import.meta.env.VITE_STAFF_LANG as Lang) || "en";
 export const TABLE = 12;
 
-const HTTP = ((import.meta.env.VITE_API_URL as string) || "http://localhost:3001").replace(/\/$/, "");
-const WS = HTTP.replace(/^http/, "ws");
+const HTTP = ((import.meta.env.VITE_API_URL as string) || `http://${window.location.hostname}:5000`).replace(/\/$/, "");
 
 /** Demo-drawer switches. `offline` blocks all calls; `flags` go to the server as X-Sim (e.g. asr_low_confidence). */
 export const sim = { offline: false, flags: new Set<string>() };
@@ -19,12 +18,17 @@ export const sim = { offline: false, flags: new Set<string>() };
 export type ApiError = { code: string; retryable: boolean; userMessage: string };
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+export const uid = (): string =>
+  (globalThis.crypto && "randomUUID" in globalThis.crypto)
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 const sessionId = (() => {
   try {
     let s = sessionStorage.getItem("sahaaya.sid");
-    if (!s) { s = crypto.randomUUID(); sessionStorage.setItem("sahaaya.sid", s); }
+    if (!s) { s = uid(); sessionStorage.setItem("sahaaya.sid", s); }
     return s;
-  } catch { return crypto.randomUUID(); }
+  } catch { return uid(); }
 })();
 
 async function toError(res: Response): Promise<ApiError> {
@@ -211,7 +215,7 @@ export function openRelay(o: {
   };
   function connect() {
     if (closed) return;
-    ws = new WebSocket(`${WS}/relay?table=${o.table}&role=${o.role}&lang=${o.lang}&since=${lastTs}`);
+    ws = new WebSocket(`${ws}/relay?table=${o.table}&role=${o.role}&lang=${o.lang}&since=${lastTs}`);
     ws.onopen = () => { tries = 0; o.onStatus(true); while (queue.length) ws!.send(JSON.stringify(queue.shift())); };
     ws.onmessage = e => {
       try { const m = JSON.parse(e.data) as RelayMsg; lastTs = Math.max(lastTs, m.ts ?? 0); o.onMessage(m); } catch { /* ignore bad frame */ }

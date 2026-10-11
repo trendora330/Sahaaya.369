@@ -36,7 +36,19 @@ const iconPaths: Record<IconName, React.ReactNode> = {
 };
 function Icon({ name, size = 22 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{iconPaths[name]}</svg>; }
 function Button({ children, icon, onClick, variant = "primary", className = "", style }: { children: React.ReactNode; icon?: IconName; onClick?: () => void; variant?: "primary" | "secondary" | "ghost"; className?: string; style?: React.CSSProperties }) { return <button onClick={onClick} style={style} className={`button ${variant} ${className}`}>{icon && <Icon name={icon} />}<span>{children}</span></button>; }
-function Logo({ small = false }: { small?: boolean }) { return <div className={`logo ${small ? "small" : ""}`}><span className="logo-mark"><Icon name="hand" size={small ? 20 : 29} /><i /></span><strong>SAHAAYA</strong></div>; }
+function Logo({ small = false }: { small?: boolean }) {
+  return (
+    <div className={`logo ${small ? "small" : ""}`}>
+      <img src="/logo.png" alt="SAHAAYA Logo" className="logo-mark" />
+      <strong>SAHAAYA</strong>
+    </div>
+  );
+}
+
+type Prefs = { diet: string[]; spice: string; avoid: string[] };
+const defaultPrefs: Prefs = { diet: [], spice: "Any", avoid: [] };
+type Diet = "veg" | "nonveg" | "vegan" | "egg" | "unknown";
+type Dish = { name: string; desc: string; price: number; img: string; diet: Diet; jain: boolean; spice: number; allergens: string[]; allergensKnown?: boolean };
 
 type MenuStats = { items: number; sections: number; unclear: number };
 type AppCtx = {
@@ -46,6 +58,7 @@ type AppCtx = {
   heard: string | null; setHeard: (t: string | null) => void; reply: string | null; setLow: (b: boolean) => void;
   relay: ReturnType<typeof useRelay>; loadMenu: (f: File | null) => Promise<void>; menuStats: MenuStats | null;
   mic: "idle" | "listening" | "processing"; toggle: () => void; startListening: () => void; stopListening: () => void; openKeypad: () => void;
+  dishes: Dish[];
 };
 const AppContext = createContext<AppCtx>(null as unknown as AppCtx);
 const useApp = () => useContext(AppContext);
@@ -159,10 +172,6 @@ function Scan({ next }: { next: () => void }) {
 
   return <main className="content scan"><input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={e => onFile(e.target.files?.[0])} /><div className="title"><span className="eyebrow">SCAN MENU</span><h1>Hold still, I’ll guide you</h1></div><div className="viewfinder">{cameraActive ? <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src="https://images.unsplash.com/photo-1589302168068-964664d93dc0?auto=format&fit=crop&w=800&q=75" alt="Menu through camera" />}<i /><i /><i /><i /><b>LIVE</b><div><Icon name="alert" /><span><strong>{cameraActive ? "Camera active" : "Position camera"}</strong><small>Point steadily at the printed menu</small></span></div></div><div className="quality"><span><i />Brightness <b>Good</b></span><span><i />Focus <b>Good</b></span></div><Button onClick={capture} icon="camera" className="wide">{busy ? "Extracting menu with Groq OCR…" : "Capture menu"}</Button><button className="text-link" onClick={() => input.current?.click()}><Icon name="upload" />Or choose image from device</button></main>;
 }
-type Prefs = { diet: string[]; spice: string; avoid: string[] };
-const defaultPrefs: Prefs = { diet: [], spice: "Any", avoid: [] };
-type Diet = "veg" | "nonveg" | "vegan" | "egg" | "unknown";
-type Dish = { name: string; desc: string; price: number; img: string; diet: Diet; jain: boolean; spice: number; allergens: string[]; allergensKnown?: boolean };
 const spiceLabel = ["Not spicy", "Mild", "Medium", "Hot", "Spice not stated"];
 const IMG1 = "https://images.unsplash.com/photo-1585937421612-70a008356fbe?auto=format&fit=crop&w=500&q=75", IMG2 = "https://images.unsplash.com/photo-1589302168068-964664d93dc0?auto=format&fit=crop&w=500&q=75";
 const demoDishes: Dish[] = [
@@ -177,7 +186,7 @@ const demoDishes: Dish[] = [
   { name: "Chicken biryani", desc: "Basmati rice layered with spiced chicken", price: 360, img: IMG1, diet: "nonveg", jain: false, spice: 3, allergens: [] },
 ];
 let dishes: Dish[] = demoDishes;
-const setDishes = (d: Dish[]) => { dishes = d };
+const setDishesGlobal = (d: Dish[]) => { dishes = d; };
 const menuToDishes = (m: ParsedMenu): Dish[] => m.sections.flatMap(s => s.items).filter(i => i.name).map(i => ({ name: i.name, desc: i.description ?? "", price: i.price ?? 0, img: "", diet: i.diet ?? (i.veg === true ? "veg" : i.veg === false ? "nonveg" : "unknown"), jain: i.jain === true, spice: typeof i.spice === "number" ? Math.min(3, Math.max(0, Math.round(i.spice))) : 4, allergens: i.allergens ?? [], allergensKnown: Array.isArray(i.allergens) }));
 const dietTag = (d: Dish) => d.diet === "unknown" ? "Diet not stated" : d.diet === "nonveg" ? "Non-veg" : d.diet === "egg" ? "Egg" : d.diet === "vegan" ? "Vegan" : "Veg";
 function matches(d: Dish, p: Prefs) {
@@ -190,30 +199,32 @@ function matches(d: Dish, p: Prefs) {
 }
 const prefSummary = (p: Prefs) => [...p.diet, ...(p.spice !== "Any" ? [p.spice] : []), ...p.avoid.map(a => `No ${a.toLowerCase()}`)];
 const money = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
-const pickLines = (cart: Record<string, number>) => dishes.filter(d => (cart[d.name] || 0) > 0).map(d => ({ name: d.name, qty: cart[d.name], price: d.price }));
+const pickLines = (cart: Record<string, number>, currentDishes: Dish[] = dishes) => currentDishes.filter(d => (cart[d.name] || 0) > 0).map(d => ({ name: d.name, qty: cart[d.name], price: d.price }));
 
 function Ready({ next, retake }: { next: () => void; retake: () => void }) {
-  const { menuStats, say } = useApp(); const m = menuStats ?? { items: dishes.length, sections: 1, unclear: 0 };
+  const { menuStats, dishes: currentDishes, say } = useApp();
+  const m = menuStats ?? { items: currentDishes.length, sections: 1, unclear: 0 };
   return <main className="content ready"><span className="success-mark"><Icon name="check" size={34} /></span><span className="eyebrow">MENU READY</span><h1>I found {m.items} items</h1><p>Organised into {m.sections} section{m.sections === 1 ? "" : "s"} so they’re easier to explore.</p><div className="summary"><span><strong>{m.items}</strong><small>items</small></span><span><strong>{m.sections}</strong><small>sections</small></span><span><strong>{m.unclear}</strong><small>prices unclear</small></span></div><div className="read-card"><span className="option-icon"><Icon name="sound" /></span><span><strong>Here’s what I found</strong><small>Tap to hear a short summary.</small></span><button onClick={() => say(`I found ${m.items} items in ${m.sections} sections.${m.unclear ? ` ${m.unclear} prices need a quick check.` : ""}`)}>Read aloud</button></div>{m.unclear > 0 && <div className="note warning"><Icon name="alert" /><span><strong>{m.unclear} price{m.unclear === 1 ? "" : "s"} need a quick check</strong><small>You can still explore now and fix them later.</small></span></div>}<Button onClick={next} icon="arrow" className="wide">Set my preferences</Button><Button onClick={retake} icon="camera" variant="secondary" className="wide">Retake photo</Button></main>;
 }
 function Preferences({ prefs, setPrefs, next }: { prefs: Prefs; setPrefs: (p: Prefs) => void; next: () => void }) {
+  const { dishes: currentDishes } = useApp();
   const toggle = (list: string[], x: string) => list.includes(x) ? list.filter(y => y !== x) : [...list, x];
-  const count = dishes.filter(d => matches(d, prefs)).length;
+  const count = currentDishes.filter(d => matches(d, prefs)).length;
   const diets: [string, IconName][] = [["Veg", "leaf"], ["Non-veg", "fire"], ["Jain", "leaf"], ["Vegan", "leaf"], ["Eggetarian", "leaf"]];
   return <><main className="content prefs"><div className="title"><span className="eyebrow">YOUR PREFERENCES</span><h1>What suits you today?</h1><p>SAHAAYA will filter and highlight dishes from your menu. You’ll still order with the waiter yourself.</p></div>
     <section className="pref-group"><h2>Food type</h2><p>Pick all that apply</p><div className="pref-chips">{diets.map(([x, i]) => <button key={x} aria-pressed={prefs.diet.includes(x)} className={prefs.diet.includes(x) ? "selected" : ""} onClick={() => setPrefs({ ...prefs, diet: toggle(prefs.diet, x) })}><Icon name={i} size={16} />{x}</button>)}</div></section>
     <section className="pref-group"><h2>Spice level</h2><div className="pref-chips">{["Any", "Less spicy", "Medium", "Hot"].map(x => <button key={x} aria-pressed={prefs.spice === x} className={prefs.spice === x ? "selected" : ""} onClick={() => setPrefs({ ...prefs, spice: x })}>{x === "Hot" ? "Spicy is fine" : x}</button>)}</div></section>
     <section className="pref-group"><h2>Avoid</h2><p>Optional allergens or ingredients</p><div className="pref-chips">{["Nuts", "Dairy", "Egg", "Gluten"].map(x => <button key={x} aria-pressed={prefs.avoid.includes(x)} className={prefs.avoid.includes(x) ? "selected" : ""} onClick={() => setPrefs({ ...prefs, avoid: toggle(prefs.avoid, x) })}>{x}</button>)}</div></section>
-    <div className="note success"><Icon name="check" /><span><strong>{count} of {dishes.length} dishes match</strong><small>{prefSummary(prefs).join(" · ") || "No filters — showing everything"}</small></span></div>
+    <div className="note success"><Icon name="check" /><span><strong>{count} of {currentDishes.length} dishes match</strong><small>{prefSummary(prefs).join(" · ") || "No filters — showing everything"}</small></span></div>
     <div className="note warning"><Icon name="alert" /><span><strong>Always confirm with staff</strong><small>Menu analysis can miss hidden ingredients. For allergies, ask the waiter.</small></span></div>
     <Button onClick={next} icon="arrow" className="wide">Show matching dishes</Button><button className="text-link" onClick={() => setPrefs(defaultPrefs)}>Clear all</button></main><Conversation user="Show me suitable dishes." system={`${count} dishes match your preferences.`} /></>;
 }
 
 function Explore({ go, cart, setCart, notify, prefs }: { go: (s: Screen) => void; cart: Record<string, number>; setCart: (c: Record<string, number>) => void; notify: (x: string) => void; prefs: Prefs }) {
+  const { dishes: currentDishes, say, explain, describeTable } = useApp();
   const [compare, setCompare] = useState(false);
-  const list = dishes.filter(d => matches(d, prefs)); const picked = pickLines(cart); const count = picked.reduce((n, l) => n + l.qty, 0); const total = picked.reduce((n, l) => n + l.qty * l.price, 0);
+  const list = currentDishes.filter(d => matches(d, prefs)); const picked = pickLines(cart, currentDishes); const count = picked.reduce((n, l) => n + l.qty, 0); const total = picked.reduce((n, l) => n + l.qty * l.price, 0);
   const chips = prefSummary(prefs);
-  const { say, explain, describeTable } = useApp();
   const describeDish = (d: Dish) => say(`${d.name}, ${d.price > 0 ? money(d.price) : "price unclear"}. ${d.desc}. ${dietTag(d)}. ${spiceLabel[d.spice]}. ${d.allergensKnown === false ? "Allergens are not stated. Please confirm with staff." : d.allergens.length ? `Contains ${d.allergens.join(", ")}. Please confirm allergens with staff.` : "No allergens are listed. Please confirm with staff."}`);
   const narrate = () => describeTable({ columns: ["Dish", "Price", "Spice", "Diet"], rows: list.slice(0, 2).map(d => [d.name, money(d.price), spiceLabel[d.spice], dietTag(d)]) });
   return <><main className="content explore"><div className="explore-head"><div><span className="eyebrow">{list.length} CHOICES</span><h1>Dishes for you</h1></div><button onClick={() => setCompare(!compare)} disabled={list.length < 2}><Icon name="contrast" />Compare</button></div><div className="chips">{chips.length ? chips.map(x => <button key={x} className="selected" onClick={() => go("preferences")}>{x}</button>) : <button onClick={() => go("preferences")}>No filters</button>}<button onClick={() => go("preferences")}>Edit preferences</button></div>
@@ -223,10 +234,11 @@ function Explore({ go, cart, setCart, notify, prefs }: { go: (s: Screen) => void
 }
 function Confirm({ title, detail, yes, no, label = "Yes, confirm", left, right }: { title: string; detail: string; yes: () => void; no: () => void; label?: string; left?: string; right?: string }) { return <div className="backdrop"><section className="confirm" role="dialog" aria-modal="true"><span className="confirm-icon"><Icon name="check" size={30} /></span><span className="eyebrow">ONE LAST CHECK</span><h2>{title}</h2><p>{detail}</p>{left && <div><span>{left}</span><strong>{right}</strong></div>}<Button onClick={yes} icon="check" className="wide">{label}</Button><Button onClick={no} icon="back" variant="secondary" className="wide">Change</Button><small>Enter to confirm · Esc to go back</small></section></div>; }
 function Order({ go, cart, setCart }: { go: (s: Screen) => void; cart: Record<string, number>; setCart: (c: Record<string, number>) => void }) {
-  const [modal, setModal] = useState(false); const lines = pickLines(cart); const total = lines.reduce((n, l) => n + l.qty * l.price, 0); const count = lines.reduce((n, l) => n + l.qty, 0);
+  const { dishes: currentDishes } = useApp();
+  const [modal, setModal] = useState(false); const lines = pickLines(cart, currentDishes); const total = lines.reduce((n, l) => n + l.qty * l.price, 0); const count = lines.reduce((n, l) => n + l.qty, 0);
   const set = (name: string, q: number) => setCart({ ...cart, [name]: Math.max(0, q) });
   return <main className="content"><div className="title"><span className="eyebrow">MY PICKS</span><h1>Your shortlist</h1><p>Adjust quantities, then tell the waiter your order. SAHAAYA doesn’t place orders for you.</p></div>
-    {lines.length === 0 ? <div className="note warning"><Icon name="alert" /><span><strong>No dishes picked yet</strong><small>Go back to the menu and tap “Add to my picks”.</small></span></div> : <div className="cart">{lines.map(l => { const d = dishes.find(x => x.name === l.name)!; return <article key={l.name}><span><strong>{l.name}</strong><small>{dietTag(d)} · {spiceLabel[d.spice]}</small></span><div className="stepper"><button onClick={() => set(l.name, l.qty - 1)} aria-label={`Fewer ${l.name}`}><Icon name="minus" /></button><b>{l.qty}</b><button onClick={() => set(l.name, l.qty + 1)} aria-label={`More ${l.name}`}><Icon name="plus" /></button></div><strong>{money(l.price * l.qty)}</strong></article> })}</div>}
+    {lines.length === 0 ? <div className="note warning"><Icon name="alert" /><span><strong>No dishes picked yet</strong><small>Go back to the menu and tap “Add to my picks”.</small></span></div> : <div className="cart">{lines.map(l => { const d = currentDishes.find(x => x.name === l.name); return <article key={l.name}><span><strong>{l.name}</strong><small>{d ? `${dietTag(d)} · ${spiceLabel[d.spice]}` : ""}</small></span><div className="stepper"><button onClick={() => set(l.name, l.qty - 1)} aria-label={`Fewer ${l.name}`}><Icon name="minus" /></button><b>{l.qty}</b><button onClick={() => set(l.name, l.qty + 1)} aria-label={`More ${l.name}`}><Icon name="plus" /></button></div><strong>{money(l.price * l.qty)}</strong></article> })}</div>}
     <div className="total"><span><small>Estimated subtotal</small><small>Taxes and charges appear on your bill</small></span><strong>{money(total)}</strong></div>
     <Button onClick={() => count > 0 ? setModal(true) : go("explore")} icon={count > 0 ? "check" : "back"} className="wide">{count > 0 ? "Save my picks" : "Back to dishes"}</Button><p className="safe"><Icon name="waiter" size={18} />Nothing is sent. You order manually with your waiter.</p>
     {modal && <Confirm title="Save these picks?" detail="Use this list when you order. Later you can upload your bill to cross-check it." left={`${count} item${count > 1 ? "s" : ""}`} right={money(total)} label="Yes, save and continue" no={() => setModal(false)} yes={() => go("staff")} />}</main>;
@@ -253,10 +265,10 @@ function extractBill(picks: BillLine[]): Bill {
   const sub = lines.reduce((n, l) => n + l.qty * l.price, 0); const service = Math.round(sub * 0.1);
   return { lines, taxPct: TAX_PCT, serviceCharge: service, billedTotal: Math.round(sub + service + sub * TAX_PCT / 100) + 20 };
 }
-function crosscheck(bill: Bill, picks: BillLine[]): { findings: Finding[]; correct: number } {
+function crosscheck(bill: Bill, picks: BillLine[], currentDishes: Dish[] = dishes): { findings: Finding[]; correct: number } {
   const f: Finding[] = []; const sub = bill.lines.reduce((n, l) => n + l.qty * l.price, 0); let adj = 0;
   bill.lines.forEach(l => {
-    const p = picks.find(x => x.name === l.name); const menu = dishes.find(d => d.name === l.name);
+    const p = picks.find(x => x.name === l.name); const menu = currentDishes.find(d => d.name === l.name);
     if (!p && !menu) f.push({ level: "warn", title: `“${l.name}” wasn’t on your picks`, detail: `Billed ${money(l.price * l.qty)}. Fine if you ordered it — otherwise ask the waiter.` });
     else if (p && l.qty > p.qty) { f.push({ level: "error", title: `${l.name}: billed ×${l.qty}, you picked ×${p.qty}`, detail: `Possible extra charge of ${money((l.qty - p.qty) * l.price)}.` }); adj += (l.qty - p.qty) * l.price; }
     else if (!p && menu) { f.push({ level: "warn", title: `${l.name} wasn’t on your picks`, detail: "Check you actually ordered this." }); }
@@ -266,21 +278,21 @@ function crosscheck(bill: Bill, picks: BillLine[]): { findings: Finding[]; corre
   if (bill.serviceCharge > 0) f.push({ level: "warn", title: `Service charge ${money(bill.serviceCharge)} added`, detail: "Service charge is optional in India. You can politely ask for it to be removed." });
   const expected = Math.round(sub + bill.serviceCharge + sub * bill.taxPct / 100);
   if (Math.abs(expected - bill.billedTotal) > 1) f.push({ level: "error", title: "Total doesn’t add up", detail: `Lines + tax add to ${money(expected)} but the bill says ${money(bill.billedTotal)} (${money(bill.billedTotal - expected)} extra).` });
-  const adjSub = sub - adj; const correct = Math.round(adjSub + bill.serviceCharge * (adjSub / sub) + adjSub * bill.taxPct / 100);
+  const adjSub = sub - adj; const correct = Math.round(adjSub + bill.serviceCharge * (adjSub / (sub || 1)) + adjSub * bill.taxPct / 100);
   if (!f.some(x => x.level === "error")) f.push({ level: "ok", title: "No calculation errors found", detail: "Items, prices and total look consistent." });
   return { findings: f, correct };
 }
 const normName = (x: string) => x.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 const jaccard = (a: string, b: string) => { const x = new Set(a.split(" ")), y = new Set(b.split(" ")); const i = [...x].filter(w => y.has(w)).length; return i / (x.size + y.size - i || 1) };
 // OCR text rarely matches menu names exactly ("PALAK PANEER"), so snap each billed line to its closest menu dish before cross-checking.
-const snapBill = (b: Bill): Bill => ({ ...b, lines: b.lines.map(l => { const n = normName(l.name); let best = dishes[0], score = 0; dishes.forEach(d => { const sc = jaccard(n, normName(d.name)); if (sc > score) { score = sc; best = d } }); return score >= 0.6 ? { ...l, name: best.name } : l }) });
+const snapBill = (b: Bill, currentDishes: Dish[] = dishes): Bill => ({ ...b, lines: b.lines.map(l => { const n = normName(l.name); let best = currentDishes[0] || { name: l.name, price: l.price }, score = 0; currentDishes.forEach(d => { const sc = jaccard(n, normName(d.name)); if (sc > score) { score = sc; best = d } }); return score >= 0.5 ? { ...l, name: best.name, ...(best.price > 0 && l.price === 0 ? { price: best.price } : {}) } : l }) });
 function Bill({ go, notify, cart, setPay }: { go: (s: Screen) => void; notify: (x: string) => void; cart: Record<string, number>; setPay: (p: { billed: number; correct: number }) => void }) {
-  const { toStaff, say, play, outLang } = useApp(); const picks = pickLines(cart); const [phase, setPhase] = useState<"idle" | "reading" | "done">("idle"); const [file, setFile] = useState<{ name: string; url: string | null } | null>(null); const [bill, setBill] = useState<Bill | null>(null);
+  const { dishes: currentDishes, toStaff, say, play, outLang } = useApp(); const picks = pickLines(cart, currentDishes); const [phase, setPhase] = useState<"idle" | "reading" | "done">("idle"); const [file, setFile] = useState<{ name: string; url: string | null } | null>(null); const [bill, setBill] = useState<Bill | null>(null);
   const analyse = async (name: string, url: string | null, f: File | null) => {
     setFile({ name, url }); setPhase("reading");
     try {
-      const b = f ? snapBill(await parseBill(f)) : extractBill(picks);
-      const res = crosscheck(b, picks);
+      const b = f ? snapBill(await parseBill(f), currentDishes) : extractBill(picks);
+      const res = crosscheck(b, picks, currentDishes);
       const hasErr = res.findings.some(x => x.level === "error");
       setBill(b);
       setPay({ billed: b.billedTotal, correct: hasErr ? res.correct : b.billedTotal });
@@ -351,6 +363,8 @@ function StaffView() {
 export default function App() {
   const [screen, setScreen] = useState<Screen>("start"), [settings, setSettings] = useState(false), [demo, setDemo] = useState(false), [system, setSystem] = useState(false), [hc, setHc] = useState(false), [persona, setPersona] = useState<Persona>("Default"), [network, setNetwork] = useState("Online"), [low, setLow] = useState(false), [toast, setToast] = useState(""), [cart, setCart] = useState<Record<string, number>>({}), [prefs, setPrefs] = useState<Prefs>(defaultPrefs), [pay, setPay] = useState({ billed: 0, correct: 0 });
   const [langs, setLangs] = useState<{ i: Lang; o: Lang }>({ i: "en", o: "en" }), [speedIdx, setSpeedIdx] = useState(1), [heard, setHeard] = useState<string | null>(null), [reply, setReply] = useState<string | null>(null), [menuStats, setMenuStats] = useState<MenuStats | null>(null), [, setMenuVer] = useState(0);
+  const [dishesState, setDishesState] = useState<Dish[]>(demoDishes);
+  const setDishes = (d: Dish[]) => { setDishesGlobal(d); setDishesState(d); };
   const [keypadOpen, setKeypadOpen] = useState(false);
   const isStaff = location.pathname.startsWith("/staff");
   const notify = (x: string) => { setToast(x); setTimeout(() => setToast(""), 2600) }; const go = (s: Screen) => { setScreen(s); setHeard(null); setReply(null); window.scrollTo({ top: 0, behavior: "smooth" }) }; const next = () => go(journey[Math.min(journey.indexOf(screen) + 1, journey.length - 1)]); const back = () => screen === "phrases" ? go("staff") : go(journey[Math.max(0, journey.indexOf(screen) - 1)]);
@@ -368,16 +382,16 @@ export default function App() {
 
   // 5th page: update food descriptions to match selected language using Groq
   useEffect(() => {
-    if (langs.o === "en" || !dishes.length) return;
+    if (langs.o === "en" || !dishesState.length) return;
     let cancelled = false;
-    translateMenuDishes(dishes, langs.o).then(translated => {
+    translateMenuDishes(dishesState, langs.o).then(translated => {
       if (!cancelled && translated && translated.length) {
         setDishes(translated);
         setMenuVer(v => v + 1);
       }
     });
     return () => { cancelled = true; };
-  }, [langs.o]);
+  }, [langs.o, dishesState]);
   const readCurrentPageRef = useRef<() => void>(() => { });
 
   const handleUserInput = useCallback((raw: string) => {
@@ -524,7 +538,7 @@ export default function App() {
       readCurrentPageRef.current();
       return;
     }
-  }, [screen, dishes, loadMenu, go, notify, langs.i, relay]);
+  }, [screen, dishesState, loadMenu, go, notify, langs.i, relay]);
 
   const { mic, toggle, startListening, stopListening } = useListen(langs.i, (text, low) => {
     if (text) handleUserInput(text);
@@ -537,11 +551,11 @@ export default function App() {
       return;
     }
 
-    const list = dishes.filter(d => matches(d, prefs));
-    const picked = pickLines(cart);
+    const list = dishesState.filter(d => matches(d, prefs));
+    const picked = pickLines(cart, dishesState);
     const count = picked.reduce((n, l) => n + l.qty, 0);
     const total = picked.reduce((n, l) => n + l.qty * l.price, 0);
-    const m = menuStats ?? { items: dishes.length, sections: 1, unclear: 0 };
+    const m = menuStats ?? { items: dishesState.length, sections: 1, unclear: 0 };
 
     const text = getPageAnnouncement(screen, langs.o, {
       menuItems: m.items,
@@ -559,7 +573,7 @@ export default function App() {
         startListening();
       }
     });
-  }, [screen, langs.o, prefs, cart, menuStats, pay, speech, startListening]);
+  }, [screen, langs.o, prefs, cart, menuStats, pay, speech, startListening, dishesState]);
   readCurrentPageRef.current = readCurrentPage;
 
   const userInteractedRef = useRef(false);
@@ -590,7 +604,7 @@ export default function App() {
 
   const ctx: AppCtx = {
     inLang: langs.i, outLang: langs.o, setLangs: (i, o) => setLangs({ i, o }), speedIdx, setSpeedIdx, notify, play: speech.play, replay: readCurrentPage, heard, setHeard, reply, relay, loadMenu, menuStats,
-    mic, toggle, startListening, stopListening, openKeypad: () => setKeypadOpen(true),
+    mic, toggle, startListening, stopListening, openKeypad: () => setKeypadOpen(true), dishes: dishesState,
     setLow: b => { if (!b) sim.flags.delete("asr_low_confidence"); setLow(b) },
     say: t => run(async () => { setReply(await speech.say(t)) }),
     explain: t => run(async () => { const o = await explainSimpler(t, langs.o); setReply(o); await speech.play(o, langs.o) }),
